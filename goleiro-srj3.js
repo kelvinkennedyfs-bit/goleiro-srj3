@@ -4,7 +4,7 @@ var P='__goleiro_srj3__';
 var el=document.getElementById(P);
 if(el){el.style.display=el.style.display==='none'?'flex':'none';return;}
 var WEB='https://script.google.com/a/macros/mercadolivre.com/s/AKfycbxCTBSBPXM50OlxZSF5qG7-U39cv5cHN2ZOLdeH-AN3X2Ni5GnbRegJHsGkw8qZGPUO/exec';
-var BASE='https://envios.adminml.com/logistics/sorting';
+var BASE='https://envios.adminml.com/logistics/sorting/api/monitoring';
 var FAC='SRJ3';
 function nb(){return new Date(new Date().toLocaleString('en-US',{timeZone:'America/Sao_Paulo'}));}
 function pz(n){return String(n).padStart(2,'0');}
@@ -95,39 +95,101 @@ var now=nb(),de=dmy(now),he=hms(now),ym=ymd(now),cicloAtivo=cicloAuto(now);
 lg('Iniciando '+de+' '+he,'in');
 lg('Ciclos: '+ciclosSel.join(', '),'in');
 try{
-var r1=await fetch(BASE+'/monitoring',{credentials:'include',headers:{Accept:'application/json'}});
+// ── API 1: grupos ──────────────────────────────────────
+lg('Buscando grupos...','in');
+var r1=await fetch(BASE+'/groups',{credentials:'include',headers:{Accept:'application/json'}});
 if(!r1.ok)throw new Error('HTTP '+r1.status);
 var ct1=r1.headers.get('content-type')||'';
-if(!ct1.includes('application/json'))throw new Error('Resposta HTML — abra o Sorting antes!');
-var ruas=await r1.json();
-if(!Array.isArray(ruas))throw new Error('Formato inesperado');
+if(!ct1.includes('application/json'))throw new Error('Sessao expirada — faca login novamente!');
+var grupos=await r1.json();
+lg('\u2705 Grupos recebidos.','ok');
+
+// grupos é array de objetos com id, name, containers[]
+// filtra containers pelos ciclos selecionados
 var ac=[];
-ruas.forEach(function(ru){
-if(!Array.isArray(ru.containers))return;
-ru.containers.forEach(function(c){
-var cg=(c.assignment||'').split('_').pop()||'';
-if(ciclosSel.indexOf(cg)!==-1)ac.push({rp:ru.prefix,id:c.id,as:c.assignment,dk:c.dock,wv:c.wave,cg:cg});
+var gruposArr=Array.isArray(grupos)?grupos:(grupos.groups||grupos.data||[]);
+gruposArr.forEach(function(g){
+  var containers=g.containers||g.slots||[];
+  containers.forEach(function(c){
+    var assignment=c.assignment||c.name||'';
+    var cg=assignment.split('_').pop()||'';
+    var rua=c.street||c.lane||assignment.charAt(0)||'?';
+    if(ciclosSel.indexOf(cg)!==-1){
+      ac.push({rp:rua,id:c.id,as:assignment,dk:c.dock||'',wv:c.wave||'',cg:cg});
+    }
+  });
 });
-});
-lg('\u2705 '+ruas.length+' ruas, '+ac.length+' gaiolas.','ok');
-if(!ac.length){lg('\u26A0 Nenhuma gaiola nos ciclos selecionados.','wn');bex.disabled=false;bex.textContent='\u25B6 EXTRAIR DADOS';return;}
+lg('\u2705 '+ac.length+' gaiolas nos ciclos selecionados.','ok');
+
+if(!ac.length){
+  // tenta logar estrutura pra debug
+  lg('Estrutura: '+JSON.stringify(gruposArr[0]).substring(0,200),'wn');
+  bex.disabled=false;bex.textContent='\u25B6 EXTRAIR DADOS';return;
+}
+
+// ── API 2: detalhes de cada gaiola ─────────────────────
 var ar=[],sm={},pr=0;
 await batch(ac,async function(ct){
-var dt={load:[],expected_load:0};
-try{var r=await fetch(BASE+'/api/monitoring/'+ct.id+'/details',{credentials:'include',headers:{Accept:'application/json'}});if(!r.ok)throw new Error('HTTP '+r.status);dt=await r.json();}catch(e){lg('\u26A0 '+ct.as+': '+e.message,'wn');}
-var ld=Array.isArray(dt.load)?dt.load:[];
-ld.forEach(function(pk){ar.push({shipmentId:String(pk.shipment_id||pk.shipmentId||''),gaiola:ct.as,rua:ct.rp,ciclo:ct.cg,status:pk.status||'',substatus:pk.substatus||'',tags:Array.isArray(pk.tags)?pk.tags.join(','):'',dock:ct.dk,wave:ct.wv,unitsExpected:dt.expected_load||0,dataExtracao:de,horaExtracao:he});});
-var ru=ct.rp;if(!sm[ru])sm[ru]={g:new Set(),p:0,c:new Set()};sm[ru].g.add(ct.as);sm[ru].p+=ld.length;sm[ru].c.add(ct.cg);
-pr++;if(pr%10===0||pr===ac.length)lg(pr+'/'+ac.length+' gaiolas...','');
+  var dt={load:[],expected_load:0};
+  try{
+    var r=await fetch(BASE+'/'+ct.id+'/details',{credentials:'include',headers:{Accept:'application/json'}});
+    if(!r.ok)throw new Error('HTTP '+r.status);
+    dt=await r.json();
+  }catch(e){lg('\u26A0 '+ct.as+': '+e.message,'wn');}
+  var ld=Array.isArray(dt.load)?dt.load:[];
+  ld.forEach(function(pk){
+    ar.push({
+      shipmentId:String(pk.shipment_id||pk.shipmentId||''),
+      gaiola:ct.as,rua:ct.rp,ciclo:ct.cg,
+      status:pk.status||'',substatus:pk.substatus||'',
+      tags:Array.isArray(pk.tags)?pk.tags.join(','):'',
+      dock:ct.dk,wave:ct.wv,
+      unitsExpected:dt.expected_load||0,
+      dataExtracao:de,horaExtracao:he
+    });
+  });
+  var ru=ct.rp;
+  if(!sm[ru])sm[ru]={g:new Set(),p:0,c:new Set()};
+  sm[ru].g.add(ct.as);sm[ru].p+=ld.length;sm[ru].c.add(ct.cg);
+  pr++;if(pr%10===0||pr===ac.length)lg(pr+'/'+ac.length+' gaiolas...','');
 },5);
 lg('\u2705 '+ar.length+' pacotes.','ok');
+
+// ── API 3: etiquetagem ─────────────────────────────────
+var BASE_SORT='https://envios.adminml.com/logistics/sorting';
 var ld2={ul:0,ue:0};
-for(var i=0;i<ciclosSel.length;i++){var cc=ciclosSel[i];try{var rl=await fetch(BASE+'/monitoring/label?group='+encodeURIComponent(FAC+'_'+ym+'_'+cc+'_0'),{credentials:'include',headers:{Accept:'application/json'}});if(!rl.ok)throw new Error('HTTP '+rl.status);var ldd=await rl.json();if(cc===cicloAtivo&&ldd.unitsExpected){ld2.ue=ldd.unitsExpected||0;ld2.ul=ldd.unitsLabelled||0;}if(ldd.unitsLabelled)ld2.ul=Math.max(ld2.ul,ldd.unitsLabelled);lg('Etiq '+cc+': '+(ldd.unitsLabelled||0)+' / '+(ldd.unitsExpected||0),'');}catch(e){lg('Etiq '+cc+': '+e.message,'wn');}}
-var tot=ar.length,ue=ld2.ue||0,gr=ue>0?+((tot/ue)*100).toFixed(2):0,ef=Math.max(0,+(100-gr).toFixed(2));
-ukpi(tot,ue);urt(sm);ft.textContent='Extr: '+de+' '+he+' | '+ciclosSel.join('+');
+for(var i=0;i<ciclosSel.length;i++){
+  var cc=ciclosSel[i];
+  try{
+    var rl=await fetch(BASE_SORT+'/monitoring/label?group='+encodeURIComponent(FAC+'_'+ym+'_'+cc+'_0'),{credentials:'include',headers:{Accept:'application/json'}});
+    if(!rl.ok)throw new Error('HTTP '+rl.status);
+    var ldd=await rl.json();
+    if(cc===cicloAtivo&&ldd.unitsExpected){ld2.ue=ldd.unitsExpected||0;ld2.ul=ldd.unitsLabelled||0;}
+    if(ldd.unitsLabelled)ld2.ul=Math.max(ld2.ul,ldd.unitsLabelled);
+    lg('Etiq '+cc+': '+(ldd.unitsLabelled||0)+' / '+(ldd.unitsExpected||0),'');
+  }catch(e){lg('Etiq '+cc+': '+e.message,'wn');}
+}
+
+var tot=ar.length,ue=ld2.ue||0;
+var gr=ue>0?+((tot/ue)*100).toFixed(2):0;
+var ef=Math.max(0,+(100-gr).toFixed(2));
+ukpi(tot,ue);urt(sm);
+ft.textContent='Extr: '+de+' '+he+' | '+ciclosSel.join('+');
+
+// ── Envia planilha ─────────────────────────────────────
 var pl={action:'goleiro_sync',data:ar,meta:{facility:FAC,dataExtracao:de,horaExtracao:he,totalPacotes:tot,unitsExpected:ue,unitsLabelled:ld2.ul,eficiencia:ef,goleiroRecebeu:gr,ciclosSelecionados:ciclosSel}};
-lg('\uD83D\uDCE4 Enviando '+tot+'...','in');
-try{var rs=await fetch(WEB,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify(pl)});var tx=await rs.text(),pp=null;try{pp=JSON.parse(tx);}catch(_){}if(rs.ok){lg('\u2705 '+tot+' enviados!','ok');lg('Efic:'+ef+'% Gol:'+gr+'%','ok');if(pp&&pp.message)lg(pp.message,'ok');}else throw new Error('HTTP '+rs.status);}catch(e){lg('\u274C Envio: '+e.message,'er');}
+lg('\uD83D\uDCE4 Enviando '+tot+' pacotes...','in');
+try{
+  var rs=await fetch(WEB,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify(pl)});
+  var tx=await rs.text(),pp=null;
+  try{pp=JSON.parse(tx);}catch(_){}
+  if(rs.ok){
+    lg('\u2705 '+tot+' enviados!','ok');
+    lg('Efic:'+ef+'% | Gol:'+gr+'%','ok');
+    if(pp&&pp.message)lg(pp.message,'ok');
+  }else throw new Error('HTTP '+rs.status);
+}catch(e){lg('\u274C Envio: '+e.message,'er');}
+
 }catch(e){lg('\u274C '+e.message,'er');}
 finally{bex.disabled=false;bex.textContent='\u25B6 EXTRAIR DADOS';}
 });
