@@ -5,6 +5,7 @@ var el=document.getElementById(P);
 if(el){el.style.display=el.style.display==='none'?'flex':'none';return;}
 var WEB='https://script.google.com/a/macros/mercadolivre.com/s/AKfycbxCTBSBPXM50OlxZSF5qG7-U39cv5cHN2ZOLdeH-AN3X2Ni5GnbRegJHsGkw8qZGPUO/exec';
 var BASE='https://envios.adminml.com/logistics/sorting/api/monitoring';
+var BASE_SORT='https://envios.adminml.com/logistics/sorting';
 var FAC='SRJ3';
 function nb(){return new Date(new Date().toLocaleString('en-US',{timeZone:'America/Sao_Paulo'}));}
 function pz(n){return String(n).padStart(2,'0');}
@@ -87,6 +88,7 @@ function lg(m,t){var l=document.createElement('span');l.className='gl'+(t?' '+t:
 function clg(){lw.innerHTML='';}
 function ukpi(tot,exp){kvt.textContent=tot.toLocaleString('pt-BR');kve.textContent=exp?exp.toLocaleString('pt-BR'):'-';var g=exp>0?(tot/exp)*100:0;var ef=Math.max(0,100-g);kvef.textContent=ef.toFixed(2)+'%';kvg.textContent=g.toFixed(2)+'%';kvef.className='gkv '+(ef>=90?'g':ef>=70?'y':'r');kvg.className='gkv '+(g<10?'g':g<30?'y':'r');}
 function urt(sm){var ks=Object.keys(sm).sort();if(!ks.length){rtbd.innerHTML='<tr><td colspan="4" style="color:#555">Nenhum dado.</td></tr>';return;}rtbd.innerHTML=ks.map(function(r){var s=sm[r];return'<tr><td><b style="color:#f2b705">'+r+'</b></td><td>'+s.g.size+'</td><td>'+s.p.toLocaleString('pt-BR')+'</td><td style="font-size:10px;color:#aaa">'+Array.from(s.c).sort().join(', ')+'</td></tr>';}).join('');}
+
 bex.addEventListener('click',async function(){
 var ciclosSel=getCiclos();
 if(!ciclosSel.length){alert('Selecione pelo menos 1 ciclo!');return;}
@@ -95,39 +97,60 @@ var now=nb(),de=dmy(now),he=hms(now),ym=ymd(now),cicloAtivo=cicloAuto(now);
 lg('Iniciando '+de+' '+he,'in');
 lg('Ciclos: '+ciclosSel.join(', '),'in');
 try{
-// ── API 1: grupos ──────────────────────────────────────
+
+// ── PASSO 1: busca grupos e filtra pelos ciclos selecionados ──
 lg('Buscando grupos...','in');
 var r1=await fetch(BASE+'/groups',{credentials:'include',headers:{Accept:'application/json'}});
-if(!r1.ok)throw new Error('HTTP '+r1.status);
-var ct1=r1.headers.get('content-type')||'';
-if(!ct1.includes('application/json'))throw new Error('Sessao expirada — faca login novamente!');
+if(!r1.ok)throw new Error('Grupos HTTP '+r1.status);
 var grupos=await r1.json();
-lg('\u2705 Grupos recebidos.','ok');
+if(!Array.isArray(grupos))throw new Error('Formato inesperado em grupos');
 
-// grupos é array de objetos com id, name, containers[]
-// filtra containers pelos ciclos selecionados
-var ac=[];
-var gruposArr=Array.isArray(grupos)?grupos:(grupos.groups||grupos.data||[]);
-gruposArr.forEach(function(g){
-  var containers=g.containers||g.slots||[];
-  containers.forEach(function(c){
-    var assignment=c.assignment||c.name||'';
-    var cg=assignment.split('_').pop()||'';
-    var rua=c.street||c.lane||assignment.charAt(0)||'?';
-    if(ciclosSel.indexOf(cg)!==-1){
-      ac.push({rp:rua,id:c.id,as:assignment,dk:c.dock||'',wv:c.wave||'',cg:cg});
-    }
-  });
+// Filtra grupos pelos ciclos selecionados
+// grupo.name = "AM1", "PM1", "SD", "CPM"
+// grupo.id   = "SRJ3_20261112_CPM_0"
+var gruposFiltrados=grupos.filter(function(g){
+  return ciclosSel.indexOf(g.name)!==-1;
 });
-lg('\u2705 '+ac.length+' gaiolas nos ciclos selecionados.','ok');
+lg('\u2705 '+gruposFiltrados.length+' grupo(s) encontrado(s): '+gruposFiltrados.map(function(g){return g.name;}).join(', '),'ok');
 
-if(!ac.length){
-  // tenta logar estrutura pra debug
-  lg('Estrutura: '+JSON.stringify(gruposArr[0]).substring(0,200),'wn');
+if(!gruposFiltrados.length){
+  lg('\u26A0 Nenhum grupo encontrado para: '+ciclosSel.join(', '),'wn');
   bex.disabled=false;bex.textContent='\u25B6 EXTRAIR DADOS';return;
 }
 
-// ── API 2: detalhes de cada gaiola ─────────────────────
+// ── PASSO 2: para cada grupo busca o layout (ruas + gaiolas) ──
+var ac=[];
+for(var gi=0;gi<gruposFiltrados.length;gi++){
+  var grupo=gruposFiltrados[gi];
+  lg('Layout: '+grupo.name+' ('+grupo.id+')...','in');
+  try{
+    var rl=await fetch(BASE+'/layout?groupName='+encodeURIComponent(grupo.id),{credentials:'include',headers:{Accept:'application/json'}});
+    if(!rl.ok)throw new Error('Layout HTTP '+rl.status);
+    var layout=await rl.json();
+    if(!Array.isArray(layout))throw new Error('Layout formato inesperado');
+    layout.forEach(function(rua){
+      var prefix=rua.prefix||'?';
+      if(!Array.isArray(rua.containers))return;
+      rua.containers.forEach(function(c){
+        ac.push({
+          rp:prefix,
+          id:c.id,
+          as:c.assignment||'',
+          dk:c.dock||'',
+          wv:c.wave||'',
+          cg:grupo.name,
+          gid:grupo.id
+        });
+      });
+    });
+    lg('\u2705 '+grupo.name+': '+layout.reduce(function(s,r){return s+(r.containers?r.containers.length:0);},0)+' gaiolas','ok');
+  }catch(e){lg('\u26A0 Layout '+grupo.name+': '+e.message,'wn');}
+}
+
+lg('Total: '+ac.length+' gaiolas para extrair.','in');
+if(!ac.length){bex.disabled=false;bex.textContent='\u25B6 EXTRAIR DADOS';return;}
+
+// ── PASSO 3: detalhes de cada gaiola (shipment IDs) ───────────
 var ar=[],sm={},pr=0;
 await batch(ac,async function(ct){
   var dt={load:[],expected_load:0};
@@ -153,21 +176,20 @@ await batch(ac,async function(ct){
   sm[ru].g.add(ct.as);sm[ru].p+=ld.length;sm[ru].c.add(ct.cg);
   pr++;if(pr%10===0||pr===ac.length)lg(pr+'/'+ac.length+' gaiolas...','');
 },5);
-lg('\u2705 '+ar.length+' pacotes.','ok');
+lg('\u2705 '+ar.length+' pacotes no goleiro.','ok');
 
-// ── API 3: etiquetagem ─────────────────────────────────
-var BASE_SORT='https://envios.adminml.com/logistics/sorting';
+// ── PASSO 4: etiquetagem ──────────────────────────────────────
 var ld2={ul:0,ue:0};
-for(var i=0;i<ciclosSel.length;i++){
-  var cc=ciclosSel[i];
+for(var i=0;i<gruposFiltrados.length;i++){
+  var gf=gruposFiltrados[i];
   try{
-    var rl=await fetch(BASE_SORT+'/monitoring/label?group='+encodeURIComponent(FAC+'_'+ym+'_'+cc+'_0'),{credentials:'include',headers:{Accept:'application/json'}});
-    if(!rl.ok)throw new Error('HTTP '+rl.status);
-    var ldd=await rl.json();
-    if(cc===cicloAtivo&&ldd.unitsExpected){ld2.ue=ldd.unitsExpected||0;ld2.ul=ldd.unitsLabelled||0;}
+    var re=await fetch(BASE_SORT+'/monitoring/label?group='+encodeURIComponent(gf.id),{credentials:'include',headers:{Accept:'application/json'}});
+    if(!re.ok)throw new Error('HTTP '+re.status);
+    var ldd=await re.json();
+    if(gf.name===cicloAtivo&&ldd.unitsExpected){ld2.ue=ldd.unitsExpected||0;ld2.ul=ldd.unitsLabelled||0;}
     if(ldd.unitsLabelled)ld2.ul=Math.max(ld2.ul,ldd.unitsLabelled);
-    lg('Etiq '+cc+': '+(ldd.unitsLabelled||0)+' / '+(ldd.unitsExpected||0),'');
-  }catch(e){lg('Etiq '+cc+': '+e.message,'wn');}
+    lg('Etiq '+gf.name+': '+(ldd.unitsLabelled||0)+' / '+(ldd.unitsExpected||0),'');
+  }catch(e){lg('Etiq '+gf.name+': '+e.message,'wn');}
 }
 
 var tot=ar.length,ue=ld2.ue||0;
@@ -176,7 +198,7 @@ var ef=Math.max(0,+(100-gr).toFixed(2));
 ukpi(tot,ue);urt(sm);
 ft.textContent='Extr: '+de+' '+he+' | '+ciclosSel.join('+');
 
-// ── Envia planilha ─────────────────────────────────────
+// ── PASSO 5: envia para planilha ──────────────────────────────
 var pl={action:'goleiro_sync',data:ar,meta:{facility:FAC,dataExtracao:de,horaExtracao:he,totalPacotes:tot,unitsExpected:ue,unitsLabelled:ld2.ul,eficiencia:ef,goleiroRecebeu:gr,ciclosSelecionados:ciclosSel}};
 lg('\uD83D\uDCE4 Enviando '+tot+' pacotes...','in');
 try{
