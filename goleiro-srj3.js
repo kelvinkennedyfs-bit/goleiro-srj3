@@ -12,7 +12,7 @@ function pz(n){return String(n).padStart(2,'0');}
 function ymd(d){return''+d.getFullYear()+pz(d.getMonth()+1)+pz(d.getDate());}
 function dmy(d){return pz(d.getDate())+'/'+pz(d.getMonth()+1)+'/'+d.getFullYear();}
 function hms(d){return pz(d.getHours())+':'+pz(d.getMinutes())+':'+pz(d.getSeconds());}
-function cicloAuto(d){var h=d.getHours();if(h<8)return'CHP';if(h<12)return'AM1';if(h<16)return'PM1';return'SD';}
+function cicloAuto(d){var h=d.getHours();if(h<8)return'CPM';if(h<12)return'AM1';if(h<16)return'PM1';return'SD';}
 async function batch(items,fn,c){var res=[],i=0;async function w(){while(i<items.length){var x=i++;res[x]=await fn(items[x]);}}var ws=[];for(var k=0;k<Math.min(c,items.length);k++)ws.push(w());await Promise.all(ws);return res;}
 var st=document.createElement('style');
 st.textContent='#'+P+'{position:fixed;bottom:20px;right:20px;width:440px;max-height:92vh;background:#1a1a1a;color:#f0f0f0;border:1px solid #f2b705;border-radius:12px;box-shadow:0 8px 32px rgba(0,0,0,.8);display:flex;flex-direction:column;font-family:Arial,sans-serif;font-size:13px;z-index:2147483647;overflow:hidden;user-select:none}'
@@ -61,7 +61,7 @@ pn.innerHTML='<div id="__gh__"><span id="__gt__">&#x1F945; GOLEIRO SRJ3</span><d
 +'</div>'
 +'<div id="__gciclos__"><p>&#x1F504; Selecione os ciclos</p>'
 +'<div class="ciclo-grid">'
-+'<div class="cbtn" data-ciclo="CHP">CHP</div>'
++'<div class="cbtn" data-ciclo="CPM">CPM</div>'
 +'<div class="cbtn ativo" data-ciclo="AM1">AM1</div>'
 +'<div class="cbtn ativo" data-ciclo="PM1">PM1</div>'
 +'<div class="cbtn ativo" data-ciclo="SD">SD</div>'
