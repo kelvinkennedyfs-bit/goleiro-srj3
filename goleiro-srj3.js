@@ -3,7 +3,7 @@
 var P='__goleiro_srj3__';
 var el=document.getElementById(P);
 if(el){el.style.display=el.style.display==='none'?'flex':'none';return;}
-var WEB='https://script.google.com/a/macros/mercadolivre.com/s/AKfycbxCTBSBPXM50OlxZSF5qG7-U39cv5cHN2ZOLdeH-AN3X2Ni5GnbRegJHsGkw8qZGPUO/exec';
+var WEB='https://script.google.com/macros/s/AKfycbx1WkLM3TbxQlpaJeCoGEjXt5MIgST-CV70Hh9g5SGKtnWZjp3p9Ff3Ynh31qbiZPA4iw/exec';
 var BASE='https://envios.adminml.com/logistics/sorting/api/monitoring';
 var BASE_SORT='https://envios.adminml.com/logistics/sorting';
 var FAC='SRJ3';
