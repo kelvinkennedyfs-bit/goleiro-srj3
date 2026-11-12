@@ -98,62 +98,66 @@ lg('Iniciando '+de+' '+he,'in');
 lg('Ciclos: '+ciclosSel.join(', '),'in');
 try{
 
-// ── PASSO 1: busca grupos e filtra pelos ciclos selecionados ──
+// PASSO 1: busca grupos
 lg('Buscando grupos...','in');
 var r1=await fetch(BASE+'/groups',{credentials:'include',headers:{Accept:'application/json'}});
 if(!r1.ok)throw new Error('Grupos HTTP '+r1.status);
 var grupos=await r1.json();
-if(!Array.isArray(grupos))throw new Error('Formato inesperado em grupos');
+if(!Array.isArray(grupos))throw new Error('Formato inesperado');
+var gruposFiltrados=grupos.filter(function(g){return ciclosSel.indexOf(g.name)!==-1;});
+lg('\u2705 '+gruposFiltrados.length+' grupo(s): '+gruposFiltrados.map(function(g){return g.name;}).join(', '),'ok');
+if(!gruposFiltrados.length){lg('\u26A0 Nenhum grupo encontrado.','wn');bex.disabled=false;bex.textContent='\u25B6 EXTRAIR DADOS';return;}
 
-// Filtra grupos pelos ciclos selecionados
-// grupo.name = "AM1", "PM1", "SD", "CPM"
-// grupo.id   = "SRJ3_20261112_CPM_0"
-var gruposFiltrados=grupos.filter(function(g){
-  return ciclosSel.indexOf(g.name)!==-1;
-});
-lg('\u2705 '+gruposFiltrados.length+' grupo(s) encontrado(s): '+gruposFiltrados.map(function(g){return g.name;}).join(', '),'ok');
-
-if(!gruposFiltrados.length){
-  lg('\u26A0 Nenhum grupo encontrado para: '+ciclosSel.join(', '),'wn');
-  bex.disabled=false;bex.textContent='\u25B6 EXTRAIR DADOS';return;
-}
-
-// ── PASSO 2: para cada grupo busca o layout (ruas + gaiolas) ──
+// PASSO 2: para cada grupo, busca layout E monitoring em paralelo
 var ac=[];
 for(var gi=0;gi<gruposFiltrados.length;gi++){
   var grupo=gruposFiltrados[gi];
-  lg('Layout: '+grupo.name+' ('+grupo.id+')...','in');
+  lg('Buscando layout+monitoring: '+grupo.name+'...','in');
   try{
-    var rl=await fetch(BASE+'/layout?groupName='+encodeURIComponent(grupo.id),{credentials:'include',headers:{Accept:'application/json'}});
-    if(!rl.ok)throw new Error('Layout HTTP '+rl.status);
-    var layout=await rl.json();
-    if(!Array.isArray(layout))throw new Error('Layout formato inesperado');
-    layout.forEach(function(rua){
-      var prefix=rua.prefix||'?';
-      if(!Array.isArray(rua.containers))return;
-      rua.containers.forEach(function(c){
-        ac.push({
-          rp:prefix,
-          id:c.id,
-          as:c.assignment||'',
-          dk:c.dock||'',
-          wv:c.wave||'',
-          cg:grupo.name,
-          gid:grupo.id
+    // Busca layout (para pegar a rua/prefix) e monitoring (para pegar containerId) em paralelo
+    var results=await Promise.all([
+      fetch(BASE+'/layout?groupName='+encodeURIComponent(grupo.id),{credentials:'include',headers:{Accept:'application/json'}}).then(function(r){return r.json();}),
+      fetch(BASE+'?group='+encodeURIComponent(grupo.id),{credentials:'include',headers:{Accept:'application/json'}}).then(function(r){return r.json();})
+    ]);
+    var layout=results[0];
+    var monitoring=results[1];
+
+    // Monta mapa de assignment -> prefix (rua) a partir do layout
+    var ruaMap={};
+    if(Array.isArray(layout)){
+      layout.forEach(function(rua){
+        if(!Array.isArray(rua.containers))return;
+        rua.containers.forEach(function(c){
+          ruaMap[c.assignment]=rua.prefix;
         });
       });
-    });
-    lg('\u2705 '+grupo.name+': '+layout.reduce(function(s,r){return s+(r.containers?r.containers.length:0);},0)+' gaiolas','ok');
-  }catch(e){lg('\u26A0 Layout '+grupo.name+': '+e.message,'wn');}
+    }
+
+    // Usa monitoring para pegar containerId real
+    if(Array.isArray(monitoring)){
+      monitoring.forEach(function(c){
+        var assignment=c.assignment||'';
+        var rua=ruaMap[assignment]||assignment.charAt(0)||'?';
+        ac.push({
+          rp:rua,
+          id:c.containerId,
+          as:assignment,
+          cg:grupo.name,
+          expectedLoad:c.expectedContainerLoad||0
+        });
+      });
+    }
+    lg('\u2705 '+grupo.name+': '+monitoring.length+' gaiolas','ok');
+  }catch(e){lg('\u26A0 '+grupo.name+': '+e.message,'wn');}
 }
 
-lg('Total: '+ac.length+' gaiolas para extrair.','in');
+lg('Total: '+ac.length+' gaiolas.','in');
 if(!ac.length){bex.disabled=false;bex.textContent='\u25B6 EXTRAIR DADOS';return;}
 
-// ── PASSO 3: detalhes de cada gaiola (shipment IDs) ───────────
+// PASSO 3: detalhes de cada gaiola
 var ar=[],sm={},pr=0;
 await batch(ac,async function(ct){
-  var dt={load:[],expected_load:0};
+  var dt={load:[],expected_load:ct.expectedLoad||0};
   try{
     var r=await fetch(BASE+'/'+ct.id+'/details',{credentials:'include',headers:{Accept:'application/json'}});
     if(!r.ok)throw new Error('HTTP '+r.status);
@@ -163,12 +167,15 @@ await batch(ac,async function(ct){
   ld.forEach(function(pk){
     ar.push({
       shipmentId:String(pk.shipment_id||pk.shipmentId||''),
-      gaiola:ct.as,rua:ct.rp,ciclo:ct.cg,
-      status:pk.status||'',substatus:pk.substatus||'',
+      gaiola:ct.as,
+      rua:ct.rp,
+      ciclo:ct.cg,
+      status:pk.status||'',
+      substatus:pk.substatus||'',
       tags:Array.isArray(pk.tags)?pk.tags.join(','):'',
-      dock:ct.dk,wave:ct.wv,
-      unitsExpected:dt.expected_load||0,
-      dataExtracao:de,horaExtracao:he
+      unitsExpected:ct.expectedLoad||0,
+      dataExtracao:de,
+      horaExtracao:he
     });
   });
   var ru=ct.rp;
@@ -178,7 +185,7 @@ await batch(ac,async function(ct){
 },5);
 lg('\u2705 '+ar.length+' pacotes no goleiro.','ok');
 
-// ── PASSO 4: etiquetagem ──────────────────────────────────────
+// PASSO 4: etiquetagem
 var ld2={ul:0,ue:0};
 for(var i=0;i<gruposFiltrados.length;i++){
   var gf=gruposFiltrados[i];
@@ -198,7 +205,7 @@ var ef=Math.max(0,+(100-gr).toFixed(2));
 ukpi(tot,ue);urt(sm);
 ft.textContent='Extr: '+de+' '+he+' | '+ciclosSel.join('+');
 
-// ── PASSO 5: envia para planilha ──────────────────────────────
+// PASSO 5: envia planilha
 var pl={action:'goleiro_sync',data:ar,meta:{facility:FAC,dataExtracao:de,horaExtracao:he,totalPacotes:tot,unitsExpected:ue,unitsLabelled:ld2.ul,eficiencia:ef,goleiroRecebeu:gr,ciclosSelecionados:ciclosSel}};
 lg('\uD83D\uDCE4 Enviando '+tot+' pacotes...','in');
 try{
